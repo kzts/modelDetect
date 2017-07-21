@@ -39,10 +39,10 @@
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
 
-#define REPEAT_NUM 10
-#define LOOP_TIME 0.5
-#define PRESSURE_MAX 0.4
-#define PRESSURE_CHANGE 0.1
+#define REPEAT_NUM 50
+#define LOOP_TIME 0.2
+#define PRESSURE_MAX 0.3
+#define PRESSURE_CHANGE 0.025
 
 struct timeval ini_t, now_t, loop_ini_t;
 
@@ -51,6 +51,7 @@ double valve_data[LINE_NUM][NUM_OF_CHANNELS];
 double time_data[LINE_NUM];
 
 double valve_now[NUM_OF_CHANNELS];
+double valve_old[NUM_OF_CHANNELS];
 
 // SPI for valves 
 bool clock_edge = false;
@@ -295,14 +296,16 @@ void generateCommands(void){
   double pm0  = 1.0;
   double pm1  = 1.0;
   // initilize
-  for ( c = 0; c< NUM_OF_CHANNELS; c++ )
+  for ( c = 0; c< NUM_OF_CHANNELS; c++ ){
+    valve_old[c] = valve_now[c];
     valve_now[c] = 0.0; 
-    //valve_now[c] = PRESSURE_MAX* rand()/ RAND_MAX;
+  }
+  //valve_now[c] = PRESSURE_MAX* rand()/ RAND_MAX;
   if ( rand() > 0.5* RAND_MAX )
-    pm0 = -1.0;
+      pm0 = -1.0;
   if ( rand() > 0.5* RAND_MAX )
-    pm1 = -1.0;
-
+      pm1 = -1.0;
+    
   valve_now[0] = mid0 + pm0* chg0;
   valve_now[1] = mid0 - pm0* chg0;
   valve_now[2] = mid1 + pm1* chg1;
