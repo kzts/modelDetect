@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <signal.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include <stdlib.h> // rand
 #include <fcntl.h>
 #include <unistd.h>
-#include "gpio.h"  
+#include "gpio.h"
 #include <stdbool.h>
 #include <sys/time.h> // gettimeofday   
 #include <string.h> // fsprintf
@@ -39,8 +39,10 @@
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
 
-#define REPEAT_NUM 100
-#define LOOP_TIME 0.1
+#define REPEAT_NUM 10
+#define LOOP_TIME 0.5
+#define PRESSURE_MAX 0.4
+#define PRESSURE_CHANGE 0.1
 
 struct timeval ini_t, now_t, loop_ini_t;
 
@@ -280,16 +282,39 @@ void getSensors( unsigned int n ){
   time_data[n] = getTime();
 }
 
+double rand_in_range( double min, double max ){
+  return min + ( rand() * ( max - min + 0.0) / (0.0 + RAND_MAX) );
+}
+
 void generateCommands(void){
   int c;
+  double mid0 = rand_in_range( PRESSURE_CHANGE, PRESSURE_MAX - PRESSURE_CHANGE );
+  double mid1 = rand_in_range( PRESSURE_CHANGE, PRESSURE_MAX - PRESSURE_CHANGE );
+  double chg0 = rand_in_range( 0.0, PRESSURE_CHANGE );
+  double chg1 = rand_in_range( 0.0, PRESSURE_CHANGE );
+  double pm0  = 1.0;
+  double pm1  = 1.0;
+  // initilize
   for ( c = 0; c< NUM_OF_CHANNELS; c++ )
-    valve_now[c] = 0.0;
+    valve_now[c] = 0.0; 
+    //valve_now[c] = PRESSURE_MAX* rand()/ RAND_MAX;
+  if ( rand() > 0.5* RAND_MAX )
+    pm0 = -1.0;
+  if ( rand() > 0.5* RAND_MAX )
+    pm1 = -1.0;
+
+  valve_now[0] = mid0 + pm0* chg0;
+  valve_now[1] = mid0 - pm0* chg0;
+  valve_now[2] = mid1 + pm1* chg1;
+  valve_now[3] = mid1 - pm1* chg1;
 }
 
 int modelDetect(void){
   int r, c;
   int n = 0;
+  // initialize
   gettimeofday( &ini_t, NULL );
+  srand((unsigned)time(NULL));
   // loop
   for ( r = 0; r < REPEAT_NUM; r++ ){
     // reset timer
@@ -298,7 +323,7 @@ int modelDetect(void){
     generateCommands();
     // set commands
     for ( c = 0; c< NUM_OF_CHANNELS; c++ )
-      valve_data[n][c] = valve_now[c];
+      setState( c, valve_now[c] );
     // get sensors
     while( getTimeLoop() < LOOP_TIME ){
       getSensors(n);
