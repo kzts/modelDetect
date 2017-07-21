@@ -39,10 +39,10 @@
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
 
-#define REPEAT_NUM 50
-#define LOOP_TIME 0.2
+#define REPEAT_NUM 100
+#define LOOP_TIME 0.1
 #define PRESSURE_MAX 0.3
-#define PRESSURE_CHANGE 0.025
+#define PRESSURE_CHANGE 0.05
 
 struct timeval ini_t, now_t, loop_ini_t;
 
