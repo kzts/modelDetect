@@ -43,12 +43,16 @@
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
 #define ANGLE_LIMIT_FILE (const char*) "data/angle_limit.dat"
+#define GAIN_FILE (const char*) "data/gain.dat"
 
 // control
 #define JOINT_NUM 2
 #define LIMIT_NUM 2
+#define CHAMBER_NUM 2
+#define ANGLE_BOARD 1
 unsigned long target_angle[JOINT_NUM];
 unsigned long angle_limit[JOINT_NUM][LIMIT_NUM];
+double gain[JOINT_NUM];
 
 // loop
 #define END_TIME 2.0
@@ -59,7 +63,7 @@ unsigned int step   = 0;
 unsigned int is_init = 0;
 //#define REPEAT_NUM 100
 //#define LOOP_TIME 0.1
-//#define PRESSURE_MAX 0.3
+#define PRESSURE_MAX 0.3
 //#define PRESSURE_CHANGE 0.05
 RTIME ini_t, now_t;
 
@@ -70,11 +74,10 @@ RTIME ini_t, now_t;
 
 // data
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
+unsigned long target_data[LINE_NUM][JOINT_NUM];
 double valve_data[LINE_NUM][NUM_OF_CHANNELS];
-double time_data[LINE_NUM];
-
-double valve_now[NUM_OF_CHANNELS];
-double valve_old[NUM_OF_CHANNELS];
+double time_data_s[LINE_NUM];
+double time_data_v[LINE_NUM];
 
 // SPI for valves 
 bool clock_edge = false;
@@ -277,8 +280,8 @@ void exhaustAll(){
     setState( c, EXHAUST );
 }
 
-void getSensors( unsigned int n ){
-  unsigned int b, p, c;
+void getSensors(){
+  unsigned int b, p;
   unsigned long tmp_val[NUM_ADC_PORT];
   unsigned long *tmp_val0;
   // sensors
@@ -286,16 +289,13 @@ void getSensors( unsigned int n ){
   for ( b=0; b<NUM_ADC; b++){
     tmp_val0 = read_sensor( b, tmp_val );
     for ( p=0; p<NUM_ADC_PORT; p++ ){
-      sensor_data[n][b][p] = tmp_val0[p]; 
+      sensor_data[step][b][p] = tmp_val0[p]; 
       //printf( "%d ", tmp_val0[p] );
     }
   }
   //printf("\n");
-  // valves
-  for ( c = 0; c< NUM_OF_CHANNELS; c++ )
-    valve_data[n][c] = valve_now[c];
   // time
-  time_data[n] = getTime();
+  time_data_s[step] = getTime();
 }
 
 long rand_in_range( double min, double max ){
@@ -304,9 +304,40 @@ long rand_in_range( double min, double max ){
 
 void changeTargetAngle(void){
   unsigned int j, l;
-  for ( j = 0; j < JOINT_NUM; j++ )
-    target_angle[j] = rand_in_range( angle_limit[j][0], angle_limit[j][1] );
+  for ( j = 0; j < JOINT_NUM; j++ ){
+    target_angle[j]      = rand_in_range( angle_limit[j][0], angle_limit[j][1] );
+    target_data[step][j] = target_angle[j];
+  }
 }
+
+void pControl(void){
+  double p_diff;
+  double valve_now[NUM_OF_CHANNELS];
+  int p0, p1, j, c;
+  // pressure
+  for ( j = 0; j < JOINT_NUM; j++ ){
+    p0 = CHAMBER_NUM * j + 0;
+    p1 = CHAMBER_NUM * j + 1;
+    p_diff = target_angle[j] - sensor_data[step][ANGLE_BOARD][j];
+    valve_now[p0] = 0.5* PRESSURE_MAX + 0.5* gain[j]* p_diff;
+    valve_now[p1] = 0.5* PRESSURE_MAX - 0.5* gain[j]* p_diff;
+  }
+  // limit
+  for ( c = 0; c < NUM_OF_CHANNELS; c++ ){
+    if ( valve_now[c] < 0 )
+      valve_now[c] = 0;
+    if ( valve_now[c] > PRESSURE_MAX )
+      valve_now[c] = PRESSURE_MAX;
+  }
+  // send pressure
+  for ( c = 0; c< NUM_OF_CHANNELS; c++ ){
+    setState( c, valve_now[c] );
+    valve_data[step][c] = valve_now[c];
+  }
+  // time
+  time_data_v[step] = getTime();
+}
+
 
 void xen_thread(void *arg __attribute__((__unused__))) {
   printf( "starting real time thread\n" ); 
@@ -328,20 +359,33 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     // change target angle
     if( step % CHANGE_STEP == 0 )
       changeTargetAngle();
-    // control
-    //pControl();
     // measure
-    getSensors(step);
+    getSensors();
+    // control
+    pControl();
     // next
     step++;
   }
 }
 
-
+void loadGain(void){
+  FILE *fp;
+  // open
+  fp = fopen( GAIN_FILE, "r" );
+  if (fp == NULL){
+    printf( "File open error: %s\n", GAIN_FILE );
+    return;
+  }
+  // read
+  fscanf( fp, "%lf,%lf", &gain[0], &gain[1] );
+  // close
+  fclose(fp);
+  // print
+  printf("gain: %lf, %lf\n", gain[0], gain[1] );
+}
 
 void loadAngleLimit(void) {
   FILE *fp;
-  char str[STR_NUM];
   unsigned int j, l;
   // open file
   fp = fopen( ANGLE_LIMIT_FILE, "r" );
@@ -367,7 +411,7 @@ void saveResults(unsigned int end_step) {
   char results_file[STR_NUM];
   char str[STR_NUM];
   char tmp_char[STR_NUM];
-  unsigned int n, b, p, v;
+  unsigned int n, b, p, v, j;
   time_t timer;
   struct tm *local;
   struct tm *utc;
@@ -390,7 +434,9 @@ void saveResults(unsigned int end_step) {
   // write file
   for ( n=0; n<end_step; n++ ){
     // time
-    sprintf( str, "%lf%s", time_data[n], DELIMITER ); 
+    sprintf( str, "%lf%s",      time_data_s[n], DELIMITER ); 
+    sprintf( tmp_char, "%lf%s", time_data_v[n], DELIMITER ); 
+    strcat( str, tmp_char );      
     // sensor
     for ( b = 0; b<NUM_ADC; b++ ) {
       for ( p = 0; p<NUM_ADC_PORT; p++ ) {
@@ -401,6 +447,10 @@ void saveResults(unsigned int end_step) {
     // command
     for ( v = 0; v<NUM_OF_CHANNELS; v++) {
       sprintf( tmp_char, "%lf%s", valve_data[n][v], DELIMITER ); 
+      strcat( str, tmp_char );
+    }
+    for ( j=0; j<JOINT_NUM; j++ ){
+      sprintf( tmp_char, "%lu%s", target_data[n][j], DELIMITER ); 
       strcat( str, tmp_char );
     }
     // end of line
@@ -414,11 +464,10 @@ void saveResults(unsigned int end_step) {
 }
 
 int main( int argc, char *argv[] ){
-  double now_time;
   RT_TASK thread_desc; 
   // load angle limit
   loadAngleLimit();
-  /*
+  loadGain();
   // initialize
   init();
   init_pins(); // ALL 5 pins are HIGH except for GND
@@ -439,12 +488,9 @@ int main( int argc, char *argv[] ){
   srand((unsigned)time(NULL));
   ini_t = rt_timer_read();
   // loop
-  now_time = getTime();
-  //while( getTime() < END_TIME || is_init < 1 ){
-  while( now_time < END_TIME || is_init < 1 ){
+  while( getTime() < END_TIME || is_init < 1 ){
     //printf( "%d %d %lf\n", is_init, step, getTime() );
     //rt_task_sleep( 100 );
-    now_time = getTime();
   }
   // delete tasks
   if( rt_task_delete( &thread_desc )){
@@ -455,7 +501,7 @@ int main( int argc, char *argv[] ){
   exhaustAll();
   // save data
   saveResults(step);
-  */
+  
   return 0;
 }
 
