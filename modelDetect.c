@@ -9,6 +9,9 @@
 #include <sys/time.h> // gettimeofday   
 #include <string.h> // fsprintf
 #include <time.h> // localtime
+// xenomai
+#include <native/task.h>
+#include <native/timer.h>
 
 //  valves
 #define pin_spi_cs1   P9_16 // 1_19=51
@@ -28,24 +31,44 @@
 #define NUM_ADC_PORT 8
 #define NUM_ADC 2
 
-#define MICRO_TO_SEC 0.000001
-#define MS_TO_SEC 0.001
+#define NANO_TO_SEC 0.000000001
+//#define MICRO_TO_SEC 0.000001
+//#define MS_TO_SEC 0.001
 
 #define EXHAUST 0.0
 
+// files
 #define LINE_NUM 20000
 #define STR_NUM 4096
-
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
+#define ANGLE_LIMIT_FILE (const char*) "data/angle_limit.dat"
 
-#define REPEAT_NUM 100
-#define LOOP_TIME 0.1
-#define PRESSURE_MAX 0.3
-#define PRESSURE_CHANGE 0.05
+// control
+#define JOINT_NUM 2
+#define LIMIT_NUM 2
+unsigned long target_angle[JOINT_NUM];
+unsigned long angle_limit[JOINT_NUM][LIMIT_NUM];
 
-struct timeval ini_t, now_t, loop_ini_t;
+// loop
+#define END_TIME 2.0
+//#define STEP_NUM 1000
+#define CHANGE_STEP 100
+unsigned int step   = 0;
+//unsigned int is_end = 0;
+unsigned int is_init = 0;
+//#define REPEAT_NUM 100
+//#define LOOP_TIME 0.1
+//#define PRESSURE_MAX 0.3
+//#define PRESSURE_CHANGE 0.05
+RTIME ini_t, now_t;
 
+// xenomai
+#define PRIORITY 99
+#define PERIOD  1000000 // nano sec 
+#define ONE_IN_NANO 1000000000
+
+// data
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
 double valve_data[LINE_NUM][NUM_OF_CHANNELS];
 double time_data[LINE_NUM];
@@ -243,23 +266,15 @@ void init_sensor(void) {
 //--------------------------------------------------------------
 // below my function
 //---------------------------------------------------------------
+double getTime(void){
+  now_t = rt_timer_read();
+  return NANO_TO_SEC*( now_t - ini_t );
+}
+
 void exhaustAll(){
   int c;
   for ( c = 0; c< NUM_OF_CHANNELS; c++ )
     setState( c, EXHAUST );
-}
-
-double getTime(void){
-  gettimeofday( &now_t, NULL );
-  double now_time = + 1.0*( now_t.tv_sec - ini_t.tv_sec ) + MICRO_TO_SEC*( now_t.tv_usec - ini_t.tv_usec );
-  return now_time;
-}
-
-double getTimeLoop(void){
-  gettimeofday( &now_t, NULL );
-  double now_time = + 1.0*( now_t.tv_sec - loop_ini_t.tv_sec ) 
-    + MICRO_TO_SEC*( now_t.tv_usec - loop_ini_t.tv_usec );
-  return now_time;
 }
 
 void getSensors( unsigned int n ){
@@ -283,60 +298,71 @@ void getSensors( unsigned int n ){
   time_data[n] = getTime();
 }
 
-double rand_in_range( double min, double max ){
-  return min + ( rand() * ( max - min + 0.0) / (0.0 + RAND_MAX) );
+long rand_in_range( double min, double max ){
+  return min + (long)(( max - min )*( rand()/ RAND_MAX ));
 }
 
-void generateCommands(void){
-  int c;
-  double mid0 = rand_in_range( PRESSURE_CHANGE, PRESSURE_MAX - PRESSURE_CHANGE );
-  double mid1 = rand_in_range( PRESSURE_CHANGE, PRESSURE_MAX - PRESSURE_CHANGE );
-  double chg0 = rand_in_range( 0.0, PRESSURE_CHANGE );
-  double chg1 = rand_in_range( 0.0, PRESSURE_CHANGE );
-  double pm0  = 1.0;
-  double pm1  = 1.0;
-  // initilize
-  for ( c = 0; c< NUM_OF_CHANNELS; c++ ){
-    valve_old[c] = valve_now[c];
-    valve_now[c] = 0.0; 
-  }
-  //valve_now[c] = PRESSURE_MAX* rand()/ RAND_MAX;
-  if ( rand() > 0.5* RAND_MAX )
-      pm0 = -1.0;
-  if ( rand() > 0.5* RAND_MAX )
-      pm1 = -1.0;
-    
-  valve_now[0] = mid0 + pm0* chg0;
-  valve_now[1] = mid0 - pm0* chg0;
-  valve_now[2] = mid1 + pm1* chg1;
-  valve_now[3] = mid1 - pm1* chg1;
+void changeTargetAngle(void){
+  unsigned int j, l;
+  for ( j = 0; j < JOINT_NUM; j++ )
+    target_angle[j] = rand_in_range( angle_limit[j][0], angle_limit[j][1] );
 }
 
-int modelDetect(void){
-  int r, c;
-  int n = 0;
-  // initialize
-  gettimeofday( &ini_t, NULL );
-  srand((unsigned)time(NULL));
-  // loop
-  for ( r = 0; r < REPEAT_NUM; r++ ){
-    // reset timer
-    gettimeofday( &loop_ini_t, NULL );
-    // get commands
-    generateCommands();
-    // set commands
-    for ( c = 0; c< NUM_OF_CHANNELS; c++ )
-      setState( c, valve_now[c] );
-    // get sensors
-    while( getTimeLoop() < LOOP_TIME ){
-      getSensors(n);
-      n++;
+void xen_thread(void *arg __attribute__((__unused__))) {
+  printf( "starting real time thread\n" ); 
+  // wait for stabilization
+  rt_task_sleep( ONE_IN_NANO );
+  // set periodic time
+  if( rt_task_set_periodic( NULL, TM_NOW, PERIOD ))
+    fprintf( stderr, "Set Periodic Error!", 1 );
+  printf("set loop period\n");
+  // set init
+  ini_t   = rt_timer_read();
+  is_init = 1;
+  // task
+  while(1) {
+    // wait to keep periodic time
+    if(rt_task_wait_period(NULL)){                  
+      fprintf( stderr, "Loop Error!\n", 1 ); // too fast loop
     }
+    // change target angle
+    if( step % CHANGE_STEP == 0 )
+      changeTargetAngle();
+    // control
+    //pControl();
+    // measure
+    getSensors(step);
+    // next
+    step++;
   }
-  return n;
 }
 
-void saveResults(int end_step) {
+
+
+void loadAngleLimit(void) {
+  FILE *fp;
+  char str[STR_NUM];
+  unsigned int j, l;
+  // open file
+  fp = fopen( ANGLE_LIMIT_FILE, "r" );
+  if (fp == NULL){
+    printf( "File open error: %s\n", ANGLE_LIMIT_FILE );
+    return;
+  }
+  // read
+  fscanf( fp, "%lu,%lu,%lu,%lu", &angle_limit[0][0], &angle_limit[0][1], &angle_limit[1][0], &angle_limit[1][1] );
+  // close
+  fclose(fp);
+  // print
+  printf("angle limit: \n");
+  for ( j=0; j<JOINT_NUM; j++ ){
+    for ( l=0; l<LIMIT_NUM; l++ )
+      printf( "%04d ", angle_limit[j][l] );
+    printf("\n");
+  }
+}
+
+void saveResults(unsigned int end_step) {
   FILE *fp;
   char results_file[STR_NUM];
   char str[STR_NUM];
@@ -388,18 +414,48 @@ void saveResults(int end_step) {
 }
 
 int main( int argc, char *argv[] ){
+  double now_time;
+  RT_TASK thread_desc; 
+  // load angle limit
+  loadAngleLimit();
+  /*
   // initialize
   init();
   init_pins(); // ALL 5 pins are HIGH except for GND
   init_DAConvAD5328();
   init_sensor();  
   exhaustAll();
-  // generate and measure motions
-  int n = modelDetect();
+  // create tasks
+  if( rt_task_create( &thread_desc, "BBB_RT", 0, PRIORITY, 0 )){
+    fprintf( stderr, "Task Create Error!\n", 1 );
+    return(0);
+  }
+  // start tasks
+  if(rt_task_start( &thread_desc, &xen_thread, NULL )){
+    fprintf( stderr, "Task Start Error!\n",1 );
+    return(0);
+  }
+  // initialize
+  srand((unsigned)time(NULL));
+  ini_t = rt_timer_read();
+  // loop
+  now_time = getTime();
+  //while( getTime() < END_TIME || is_init < 1 ){
+  while( now_time < END_TIME || is_init < 1 ){
+    //printf( "%d %d %lf\n", is_init, step, getTime() );
+    //rt_task_sleep( 100 );
+    now_time = getTime();
+  }
+  // delete tasks
+  if( rt_task_delete( &thread_desc )){
+    fprintf( stderr, "Task Delete Error!\n", 1 );
+    //return(0);
+  }
   // unitialize
   exhaustAll();
   // save data
-  saveResults(n);
+  saveResults(step);
+  */
   return 0;
 }
 
