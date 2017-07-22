@@ -55,21 +55,23 @@ unsigned long angle_limit[JOINT_NUM][LIMIT_NUM];
 double gain[JOINT_NUM];
 
 // loop
-#define END_TIME 2.0
+#define END_TIME 5.0
 //#define STEP_NUM 1000
 #define CHANGE_STEP 100
 unsigned int step   = 0;
-//unsigned int is_end = 0;
+unsigned int is_end = 0;
 unsigned int is_init = 0;
 //#define REPEAT_NUM 100
 //#define LOOP_TIME 0.1
-#define PRESSURE_MAX 0.3
+//#define PRESSURE_MAX 0.3
+#define PRESSURE_MAX 0.1
 //#define PRESSURE_CHANGE 0.05
 RTIME ini_t, now_t;
 
 // xenomai
 #define PRIORITY 99
-#define PERIOD  1000000 // nano sec 
+//#define PERIOD  1000000 // nano sec 
+#define PERIOD  2000000 // nano sec 
 #define ONE_IN_NANO 1000000000
 
 // data
@@ -299,29 +301,35 @@ void getSensors(){
 }
 
 long rand_in_range( double min, double max ){
-  return min + (long)(( max - min )*( rand()/ RAND_MAX ));
+  return min + (long)(( max - min )*(( rand() + 0.0 )/( RAND_MAX + 0.0 )));
 }
 
 void changeTargetAngle(void){
   unsigned int j, l;
+  //printf("target angle: ");
   for ( j = 0; j < JOINT_NUM; j++ ){
     target_angle[j]      = rand_in_range( angle_limit[j][0], angle_limit[j][1] );
     target_data[step][j] = target_angle[j];
+    //printf( "%lu ", target_angle[j] );
   }
+  //printf("\n");
 }
 
 void pControl(void){
-  double p_diff;
+  long a_diff;
   double valve_now[NUM_OF_CHANNELS];
   int p0, p1, j, c;
   // pressure
+  //printf("a_diff: ");
   for ( j = 0; j < JOINT_NUM; j++ ){
     p0 = CHAMBER_NUM * j + 0;
     p1 = CHAMBER_NUM * j + 1;
-    p_diff = target_angle[j] - sensor_data[step][ANGLE_BOARD][j];
-    valve_now[p0] = 0.5* PRESSURE_MAX + 0.5* gain[j]* p_diff;
-    valve_now[p1] = 0.5* PRESSURE_MAX - 0.5* gain[j]* p_diff;
+    a_diff = target_angle[j] - sensor_data[step][ANGLE_BOARD][j];
+    valve_now[p0] = 0.5* PRESSURE_MAX - 0.5* gain[j]* a_diff;
+    valve_now[p1] = 0.5* PRESSURE_MAX + 0.5* gain[j]* a_diff;
+    //printf( "%lu ", a_diff );
   }
+  //printf("\n");
   // limit
   for ( c = 0; c < NUM_OF_CHANNELS; c++ ){
     if ( valve_now[c] < 0 )
@@ -329,15 +337,17 @@ void pControl(void){
     if ( valve_now[c] > PRESSURE_MAX )
       valve_now[c] = PRESSURE_MAX;
   }
+  //printf("valve: ");
   // send pressure
   for ( c = 0; c< NUM_OF_CHANNELS; c++ ){
     setState( c, valve_now[c] );
     valve_data[step][c] = valve_now[c];
+    //printf( "%5.4f ", valve_now[c] );
   }
+  //printf("\n");
   // time
   time_data_v[step] = getTime();
 }
-
 
 void xen_thread(void *arg __attribute__((__unused__))) {
   printf( "starting real time thread\n" ); 
@@ -365,6 +375,9 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     pControl();
     // next
     step++;
+    // end
+    if( getTime() > END_TIME )
+      is_end = 1;
   }
 }
 
@@ -469,6 +482,9 @@ int main( int argc, char *argv[] ){
   loadAngleLimit();
   loadGain();
   // initialize
+  srand((unsigned)time(NULL));
+  // initialize
+  ini_t = rt_timer_read();
   init();
   init_pins(); // ALL 5 pins are HIGH except for GND
   init_DAConvAD5328();
@@ -484,14 +500,24 @@ int main( int argc, char *argv[] ){
     fprintf( stderr, "Task Start Error!\n",1 );
     return(0);
   }
-  // initialize
-  srand((unsigned)time(NULL));
-  ini_t = rt_timer_read();
   // loop
-  while( getTime() < END_TIME || is_init < 1 ){
-    //printf( "%d %d %lf\n", is_init, step, getTime() );
-    //rt_task_sleep( 100 );
-  }
+  while( is_init < 1 )
+    getTime();
+  while( is_end < 1 )
+    getTime();
+  //while( is_init < 1 ){
+    //printf( "wait. %d %d %d %lf\n", is_init, is_end, step, getTime() );
+  //}
+  //ini_t = rt_timer_read();
+  //while( is_end < 1 ){
+  //printf( "move. %d %d %d %lf\n", is_init, is_end, step, getTime() );
+  //}
+  //printf( "end. %d %d %d %lf\n", is_init, is_end, step, getTime() );
+  //while( getTime() < END_TIME || is_init < 1 ){
+  
+  //printf( "%d %d %lf\n", is_init, step, getTime() );
+  //rt_task_sleep( 100 );
+  //}
   // delete tasks
   if( rt_task_delete( &thread_desc )){
     fprintf( stderr, "Task Delete Error!\n", 1 );
