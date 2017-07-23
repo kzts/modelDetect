@@ -49,7 +49,7 @@
 #define CHAMBER_NUM 2
 #define ANGLE_BOARD 1
 #define ANGLE_PORT 1
-double gain;
+double p_gain, i_gain, d_gain;
 
 // loop
 #define END_TIME 5.0
@@ -64,8 +64,8 @@ unsigned int is_end = 0;
 //#define REPEAT_NUM 100
 //#define LOOP_TIME 0.1
 //#define PRESSURE_MAX 0.3
-#define PRESSURE_MAX 0.1
-#define PRESSURE_FIX 0.3
+#define PRESSURE_MAX 0.06
+#define PRESSURE_FIX 0.06
 //#define PRESSURE_CHANGE 0.05
 RTIME ini_t, now_t;
 
@@ -76,11 +76,11 @@ RTIME ini_t, now_t;
 #define ONE_IN_NANO 1000000000
 
 // motion
-#define STOP_VELOCITY 10
+#define STOP_VELOCITY 2
 #define WAIT_TIME 1
-#define NEAR_ANGLE 5
+#define NEAR_ANGLE 30
 #define PRESSURE_STOP 0.5
-#define OTHER 1
+#define OTHER 0
 #define FORWARD 2
 #define BACK 3
 unsigned long ini_angle;
@@ -324,13 +324,31 @@ unsigned long getAngle(unsigned int n){
   return sensor_data[n][ANGLE_BOARD][ANGLE_PORT];
 }
 
-void pControl( long target_angle ){
-  long diff;
-  double forw, back;
+long getVelocity(unsigned int n){
+  if( n == 0 )
+    return 0;
+  else
+    return getAngle(n) - getAngle(n-1);
+}
+
+long getSumDiff(int n, long target_angle ){
+  int m;
+  long sum=0;
+  for( m = 0; m < n; m++ )
+    sum+= target_angle - getAngle(m);
+  return sum;
+}
+
+void PIDcontrol( long target_angle ){
+  long diff_p, diff_i;
+  double forw, back, torque;
   // pressure
-  diff = target_angle - getAngle(step);
-  forw = 0.5* PRESSURE_MAX - 0.5* gain* diff;
-  back = 0.5* PRESSURE_MAX + 0.5* gain* diff;
+  diff_p = target_angle - getAngle(step);
+  diff_i = getSumDiff( step, target_angle );
+  torque = p_gain* diff_p + i_gain* diff_i + d_gain* getVelocity(step);
+  forw = 0.5* PRESSURE_MAX - 0.5* torque;
+  back = 0.5* PRESSURE_MAX + 0.5* torque;
+  printf("angle: %04d/%04d, torque: %5.4f\n",getAngle(step),ini_angle,torque);
   // limit
   if ( forw < 0 )
       forw = 0;
@@ -347,29 +365,27 @@ void pControl( long target_angle ){
   valve_now[BACK   ] = back;
 }
 
-long getVelocity(unsigned int n){
-  if( n == 0 )
-    return 0;
-  else
-    return getAngle(n) - getAngle(n-1);
-}
+
 
 void xen_thread(void *arg __attribute__((__unused__))) {
   RTIME ini_t_wait = rt_timer_read();
   RTIME now_t_wait = rt_timer_read();
   long ini_vel;
   printf( "starting real time thread\n" ); 
+  // fix joint 1 (pre)
+  setState( OTHER, PRESSURE_FIX );
+  valve_now[OTHER] = PRESSURE_FIX;
   // wait for stabilization
   rt_task_sleep( ONE_IN_NANO );
   // set periodic time
   if( rt_task_set_periodic( NULL, TM_NOW, PERIOD ))
     fprintf( stderr, "Set Periodic Error!", 1 );
   printf("set loop period\n");
+  // fix joint 1 (pre)
+  setState( OTHER, 2.0* PRESSURE_STOP );
+  valve_now[OTHER] = 2.0* PRESSURE_STOP;
   // set init
   ini_t = rt_timer_read();
-  // fix joint 1
-  setState( OTHER, PRESSURE_FIX );
-  valve_now[OTHER] = PRESSURE_FIX;
   // task
   while(1) {
     if(rt_task_wait_period(NULL)){                  
@@ -389,9 +405,11 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	valve_now[BACK]    = EXHAUST;
 	is_wait = 1;
 	ini_t_wait = rt_timer_read();
+	printf("take initial posture. wait.\n");
       }else{
 	// control
-	pControl( ini_angle );
+	PIDcontrol( ini_angle );
+	
       }
     }
     // phase: wait phase
@@ -407,12 +425,14 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	setState( BACK,    pressure_back );
 	valve_now[FORWARD] = pressure_forward;
 	valve_now[BACK]    = pressure_back;
+	printf("accelerate.\n");
       }        
     }
     // acceleration phase
     if ( is_acce > 0 ){
       // get angle
-      if( abs( getAngle(step) - tar_angle ) < NEAR_ANGLE ){
+      //if( abs( getAngle(step) - tar_angle ) < NEAR_ANGLE ){
+      if( getAngle(step) < tar_angle ){
 	// phase end
 	is_acce = 0;
 	// stop arm
@@ -421,7 +441,8 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	valve_now[FORWARD] = EXHAUST;
 	valve_now[BACK]    = PRESSURE_STOP;
 	is_stop = 1;
-	ini_vel = getVelocity(step);	  
+	ini_vel = getVelocity(step);
+	printf("arm reached. stop.\n");	  
       }
     }
     // stop phase
@@ -430,6 +451,7 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	// motion end
 	is_stop = 0;
 	is_end  = 1;
+	printf("motion end.\n");	  
       }
     }
     // get command value
@@ -493,15 +515,18 @@ void saveResults(unsigned int end_step) {
 int main( int argc, char *argv[] ){
   RT_TASK thread_desc; 
   // input
-  if ( argc != 6 ){
-    printf("input: gain, two angles, and two pressures.");
+  if ( argc != 8 ){
+    printf("input: three gains, two angles, and two pressures.\n");
     return 0;
   }
-  gain = atof( argv[1] );
-  ini_angle = atoi( argv[2] );
-  tar_angle = atoi( argv[3] );
-  pressure_forward = atof( argv[4] );
-  pressure_back    = atof( argv[5] );
+  p_gain = atof( argv[1] );
+  i_gain = atof( argv[2] );
+  d_gain = atof( argv[3] );
+  ini_angle = atoi( argv[4] );
+  tar_angle = atoi( argv[5] );
+  pressure_forward = atof( argv[6] );
+  pressure_back    = atof( argv[7] );
+  printf("gain: %f, %f, %f\n", p_gain, i_gain, d_gain );
   // initialize
   ini_t = rt_timer_read();
   init();

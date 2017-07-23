@@ -317,7 +317,7 @@ int main( int argc, char *argv[] ){
   double end_time;
   // input
   if ( argc != 6 ){
-    printf("input: time and four pressures.");
+    printf("input: time and four pressures.\n");
     return 0;
   }
   end_time    = atof( argv[1] );
@@ -338,6 +338,7 @@ int main( int argc, char *argv[] ){
   // loop
   for( n = 0; n < LINE_NUM; n++ ){
     getSensors(n);
+    printf("angle: %4d, %4d\n",sensor_data[n][1][0],sensor_data[n][1][1]);
     if( getTime() > end_time )
       break;
   }
