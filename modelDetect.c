@@ -38,33 +38,34 @@
 #define EXHAUST 0.0
 
 // files
-#define LINE_NUM 20000
+#define LINE_NUM 5000
 #define STR_NUM 4096
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
-#define ANGLE_LIMIT_FILE (const char*) "data/angle_limit.dat"
-#define GAIN_FILE (const char*) "data/gain.dat"
 
 // control
 #define JOINT_NUM 2
 #define LIMIT_NUM 2
 #define CHAMBER_NUM 2
 #define ANGLE_BOARD 1
-unsigned long target_angle[JOINT_NUM];
-unsigned long angle_limit[JOINT_NUM][LIMIT_NUM];
-double gain[JOINT_NUM];
+#define ANGLE_PORT 1
+double gain;
 
 // loop
 #define END_TIME 5.0
 //#define STEP_NUM 1000
 #define CHANGE_STEP 100
-unsigned int step   = 0;
-unsigned int is_end = 0;
+unsigned int step = 0; // counter
 unsigned int is_init = 0;
+unsigned int is_wait = 0;
+unsigned int is_acce = 0;
+unsigned int is_stop = 0;
+unsigned int is_end = 0;
 //#define REPEAT_NUM 100
 //#define LOOP_TIME 0.1
 //#define PRESSURE_MAX 0.3
 #define PRESSURE_MAX 0.1
+#define PRESSURE_FIX 0.3
 //#define PRESSURE_CHANGE 0.05
 RTIME ini_t, now_t;
 
@@ -74,12 +75,25 @@ RTIME ini_t, now_t;
 #define PERIOD  2000000 // nano sec 
 #define ONE_IN_NANO 1000000000
 
+// motion
+#define STOP_VELOCITY 10
+#define WAIT_TIME 1
+#define NEAR_ANGLE 5
+#define PRESSURE_STOP 0.5
+#define OTHER 1
+#define FORWARD 2
+#define BACK 3
+unsigned long ini_angle;
+unsigned long tar_angle;
+double pressure_forward;
+double pressure_back;
+
 // data
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
 unsigned long target_data[LINE_NUM][JOINT_NUM];
 double valve_data[LINE_NUM][NUM_OF_CHANNELS];
-double time_data_s[LINE_NUM];
-double time_data_v[LINE_NUM];
+double time_data[LINE_NUM];
+double valve_now[NUM_OF_CHANNELS];
 
 // SPI for valves 
 bool clock_edge = false;
@@ -276,13 +290,13 @@ double getTime(void){
   return NANO_TO_SEC*( now_t - ini_t );
 }
 
-void exhaustAll(){
+void exhaustAll(void){
   int c;
   for ( c = 0; c< NUM_OF_CHANNELS; c++ )
     setState( c, EXHAUST );
 }
 
-void getSensors(){
+void getSensors(void){
   unsigned int b, p;
   unsigned long tmp_val[NUM_ADC_PORT];
   unsigned long *tmp_val0;
@@ -297,59 +311,53 @@ void getSensors(){
   }
   //printf("\n");
   // time
-  time_data_s[step] = getTime();
+  time_data[step] = getTime();
 }
 
-long rand_in_range( double min, double max ){
-  return min + (long)(( max - min )*(( rand() + 0.0 )/( RAND_MAX + 0.0 )));
-}
-
-void changeTargetAngle(void){
-  unsigned int j, l;
-  //printf("target angle: ");
-  for ( j = 0; j < JOINT_NUM; j++ ){
-    target_angle[j]      = rand_in_range( angle_limit[j][0], angle_limit[j][1] );
-    target_data[step][j] = target_angle[j];
-    //printf( "%lu ", target_angle[j] );
-  }
-  //printf("\n");
-}
-
-void pControl(void){
-  long a_diff;
-  double valve_now[NUM_OF_CHANNELS];
-  int p0, p1, j, c;
-  // pressure
-  //printf("a_diff: ");
-  for ( j = 0; j < JOINT_NUM; j++ ){
-    p0 = CHAMBER_NUM * j + 0;
-    p1 = CHAMBER_NUM * j + 1;
-    a_diff = target_angle[j] - sensor_data[step][ANGLE_BOARD][j];
-    valve_now[p0] = 0.5* PRESSURE_MAX - 0.5* gain[j]* a_diff;
-    valve_now[p1] = 0.5* PRESSURE_MAX + 0.5* gain[j]* a_diff;
-    //printf( "%lu ", a_diff );
-  }
-  //printf("\n");
-  // limit
-  for ( c = 0; c < NUM_OF_CHANNELS; c++ ){
-    if ( valve_now[c] < 0 )
-      valve_now[c] = 0;
-    if ( valve_now[c] > PRESSURE_MAX )
-      valve_now[c] = PRESSURE_MAX;
-  }
-  //printf("valve: ");
-  // send pressure
-  for ( c = 0; c< NUM_OF_CHANNELS; c++ ){
-    setState( c, valve_now[c] );
+void getValves(void){
+  unsigned int c;
+  for ( c = 0; c< NUM_OF_CHANNELS; c++ )
     valve_data[step][c] = valve_now[c];
-    //printf( "%5.4f ", valve_now[c] );
-  }
-  //printf("\n");
-  // time
-  time_data_v[step] = getTime();
+}
+
+unsigned long getAngle(unsigned int n){
+  return sensor_data[n][ANGLE_BOARD][ANGLE_PORT];
+}
+
+void pControl( long target_angle ){
+  long diff;
+  double forw, back;
+  // pressure
+  diff = target_angle - getAngle(step);
+  forw = 0.5* PRESSURE_MAX - 0.5* gain* diff;
+  back = 0.5* PRESSURE_MAX + 0.5* gain* diff;
+  // limit
+  if ( forw < 0 )
+      forw = 0;
+  if ( back < 0 )
+      back = 0;
+  if ( forw > PRESSURE_MAX )
+      forw = PRESSURE_MAX;
+  if ( back > PRESSURE_MAX )
+      back = PRESSURE_MAX;
+  // send pressure
+  setState( FORWARD, forw );
+  setState( BACK,    back );
+  valve_now[FORWARD] = forw;
+  valve_now[BACK   ] = back;
+}
+
+long getVelocity(unsigned int n){
+  if( n == 0 )
+    return 0;
+  else
+    return getAngle(n) - getAngle(n-1);
 }
 
 void xen_thread(void *arg __attribute__((__unused__))) {
+  RTIME ini_t_wait = rt_timer_read();
+  RTIME now_t_wait = rt_timer_read();
+  long ini_vel;
   printf( "starting real time thread\n" ); 
   // wait for stabilization
   rt_task_sleep( ONE_IN_NANO );
@@ -358,66 +366,78 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     fprintf( stderr, "Set Periodic Error!", 1 );
   printf("set loop period\n");
   // set init
-  ini_t   = rt_timer_read();
-  is_init = 1;
+  ini_t = rt_timer_read();
+  // fix joint 1
+  setState( OTHER, PRESSURE_FIX );
+  valve_now[OTHER] = PRESSURE_FIX;
   // task
   while(1) {
-    // wait to keep periodic time
     if(rt_task_wait_period(NULL)){                  
       fprintf( stderr, "Loop Error!\n", 1 ); // too fast loop
     }
-    // change target angle
-    if( step % CHANGE_STEP == 0 )
-      changeTargetAngle();
     // measure
     getSensors();
-    // control
-    pControl();
+    // phase: take initial posture
+    if ( is_init < 1 ){
+      if( abs( getAngle(step) - ini_angle ) < NEAR_ANGLE && abs( getVelocity(step) ) < STOP_VELOCITY ){
+	// phase end
+	is_init = 1;
+	// exhaust and wait
+	setState( FORWARD, EXHAUST );
+	setState( BACK,    EXHAUST );
+	valve_now[FORWARD] = EXHAUST;
+	valve_now[BACK]    = EXHAUST;
+	is_wait = 1;
+	ini_t_wait = rt_timer_read();
+      }else{
+	// control
+	pControl( ini_angle );
+      }
+    }
+    // phase: wait phase
+    if ( is_wait > 0 ){
+      // get time 
+      now_t_wait = rt_timer_read();
+      if( NANO_TO_SEC *( now_t_wait - ini_t_wait ) > WAIT_TIME ){
+	// phase end
+	is_wait = 0;
+	// accelerate arm
+	is_acce = 1;
+	setState( FORWARD, pressure_forward );
+	setState( BACK,    pressure_back );
+	valve_now[FORWARD] = pressure_forward;
+	valve_now[BACK]    = pressure_back;
+      }        
+    }
+    // acceleration phase
+    if ( is_acce > 0 ){
+      // get angle
+      if( abs( getAngle(step) - tar_angle ) < NEAR_ANGLE ){
+	// phase end
+	is_acce = 0;
+	// stop arm
+	setState( FORWARD, EXHAUST );
+	setState( BACK,    PRESSURE_STOP );
+	valve_now[FORWARD] = EXHAUST;
+	valve_now[BACK]    = PRESSURE_STOP;
+	is_stop = 1;
+	ini_vel = getVelocity(step);	  
+      }
+    }
+    // stop phase
+    if ( is_stop > 0 ){
+      if( abs( getVelocity(step) ) < STOP_VELOCITY ){
+	// motion end
+	is_stop = 0;
+	is_end  = 1;
+      }
+    }
+    // get command value
+    getValves();
     // next
     step++;
-    // end
-    if( getTime() > END_TIME )
-      is_end = 1;
-  }
-}
-
-void loadGain(void){
-  FILE *fp;
-  // open
-  fp = fopen( GAIN_FILE, "r" );
-  if (fp == NULL){
-    printf( "File open error: %s\n", GAIN_FILE );
-    return;
-  }
-  // read
-  fscanf( fp, "%lf,%lf", &gain[0], &gain[1] );
-  // close
-  fclose(fp);
-  // print
-  printf("gain: %lf, %lf\n", gain[0], gain[1] );
-}
-
-void loadAngleLimit(void) {
-  FILE *fp;
-  unsigned int j, l;
-  // open file
-  fp = fopen( ANGLE_LIMIT_FILE, "r" );
-  if (fp == NULL){
-    printf( "File open error: %s\n", ANGLE_LIMIT_FILE );
-    return;
-  }
-  // read
-  fscanf( fp, "%lu,%lu,%lu,%lu", &angle_limit[0][0], &angle_limit[0][1], &angle_limit[1][0], &angle_limit[1][1] );
-  // close
-  fclose(fp);
-  // print
-  printf("angle limit: \n");
-  for ( j=0; j<JOINT_NUM; j++ ){
-    for ( l=0; l<LIMIT_NUM; l++ )
-      printf( "%04d ", angle_limit[j][l] );
-    printf("\n");
-  }
-}
+  }// while
+}//function
 
 void saveResults(unsigned int end_step) {
   FILE *fp;
@@ -447,9 +467,7 @@ void saveResults(unsigned int end_step) {
   // write file
   for ( n=0; n<end_step; n++ ){
     // time
-    sprintf( str, "%lf%s",      time_data_s[n], DELIMITER ); 
-    sprintf( tmp_char, "%lf%s", time_data_v[n], DELIMITER ); 
-    strcat( str, tmp_char );      
+    sprintf( str, "%lf%s", time_data[n], DELIMITER ); 
     // sensor
     for ( b = 0; b<NUM_ADC; b++ ) {
       for ( p = 0; p<NUM_ADC_PORT; p++ ) {
@@ -460,10 +478,6 @@ void saveResults(unsigned int end_step) {
     // command
     for ( v = 0; v<NUM_OF_CHANNELS; v++) {
       sprintf( tmp_char, "%lf%s", valve_data[n][v], DELIMITER ); 
-      strcat( str, tmp_char );
-    }
-    for ( j=0; j<JOINT_NUM; j++ ){
-      sprintf( tmp_char, "%lu%s", target_data[n][j], DELIMITER ); 
       strcat( str, tmp_char );
     }
     // end of line
@@ -478,11 +492,16 @@ void saveResults(unsigned int end_step) {
 
 int main( int argc, char *argv[] ){
   RT_TASK thread_desc; 
-  // load angle limit
-  loadAngleLimit();
-  loadGain();
-  // initialize
-  srand((unsigned)time(NULL));
+  // input
+  if ( argc != 6 ){
+    printf("input: gain, two angles, and two pressures.");
+    return 0;
+  }
+  gain = atof( argv[1] );
+  ini_angle = atoi( argv[2] );
+  tar_angle = atoi( argv[3] );
+  pressure_forward = atof( argv[4] );
+  pressure_back    = atof( argv[5] );
   // initialize
   ini_t = rt_timer_read();
   init();
@@ -500,24 +519,9 @@ int main( int argc, char *argv[] ){
     fprintf( stderr, "Task Start Error!\n",1 );
     return(0);
   }
-  // loop
-  while( is_init < 1 )
+  // move arm
+  while( is_end < 1 && step < LINE_NUM )
     getTime();
-  while( is_end < 1 )
-    getTime();
-  //while( is_init < 1 ){
-    //printf( "wait. %d %d %d %lf\n", is_init, is_end, step, getTime() );
-  //}
-  //ini_t = rt_timer_read();
-  //while( is_end < 1 ){
-  //printf( "move. %d %d %d %lf\n", is_init, is_end, step, getTime() );
-  //}
-  //printf( "end. %d %d %d %lf\n", is_init, is_end, step, getTime() );
-  //while( getTime() < END_TIME || is_init < 1 ){
-  
-  //printf( "%d %d %lf\n", is_init, step, getTime() );
-  //rt_task_sleep( 100 );
-  //}
   // delete tasks
   if( rt_task_delete( &thread_desc )){
     fprintf( stderr, "Task Delete Error!\n", 1 );
