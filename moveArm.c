@@ -41,7 +41,15 @@ double pressure[NUM_OF_CHANNELS];
 
 struct timeval ini_t, now_t;
 
+// pressure
+#define VAL_MAX 4096.0
+#define VOLT_MAX 5.0
+#define VOLT_MIN 1.0
+
 // data
+#define CHECK 7
+#define PRESSURE_BOARD 0
+#define ANGLE_BOARD 1
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
 double time_data[LINE_NUM];
 
@@ -312,6 +320,17 @@ void saveResults(unsigned int end_step) {
   printf("saved %s. %d lines\n", results_file, end_step );
 }
 
+unsigned long getAngle( unsigned int n, unsigned int p ){
+  return sensor_data[n][ANGLE_BOARD][p];
+}
+
+unsigned long getPressure( unsigned int n, unsigned int p ){
+  double ratio = sensor_data[n][PRESSURE_BOARD][p]/ VAL_MAX;
+  double volt  = VOLT_MAX* ratio;
+  double pres  = ( volt - VOLT_MIN )/( VOLT_MAX - VOLT_MIN ); // ratio
+  return pres;
+}
+
 int main( int argc, char *argv[] ){
   int n, c;
   double end_time;
@@ -338,7 +357,8 @@ int main( int argc, char *argv[] ){
   // loop
   for( n = 0; n < LINE_NUM; n++ ){
     getSensors(n);
-    printf("angle: %4d, %4d\n",sensor_data[n][1][0],sensor_data[n][1][1]);
+    //printf("angle: %4d, %4d\n",sensor_data[n][1][0],sensor_data[n][1][1]);
+    printf( "pressure: %8.3f\n", getPressure( n, CHECK ));
     if( getTime() > end_time )
       break;
   }

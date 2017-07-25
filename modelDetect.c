@@ -48,22 +48,16 @@
 #define LIMIT_NUM 2
 #define CHAMBER_NUM 2
 #define ANGLE_BOARD 1
-#define ANGLE_PORT 1
+#define ANGLE_PORT 0
 double p_gain, i_gain, d_gain;
 
 // loop
-#define END_TIME 5.0
-//#define STEP_NUM 1000
-#define CHANGE_STEP 100
 unsigned int step = 0; // counter
 unsigned int is_init = 0;
 unsigned int is_wait = 0;
 unsigned int is_acce = 0;
 unsigned int is_stop = 0;
 unsigned int is_end = 0;
-//#define REPEAT_NUM 100
-//#define LOOP_TIME 0.1
-//#define PRESSURE_MAX 0.3
 #define PRESSURE_MAX 0.06
 #define PRESSURE_FIX 0.06
 //#define PRESSURE_CHANGE 0.05
@@ -80,9 +74,9 @@ RTIME ini_t, now_t;
 #define WAIT_TIME 1
 #define NEAR_ANGLE 30
 #define PRESSURE_STOP 0.5
-#define OTHER 0
-#define FORWARD 2
-#define BACK 3
+#define OTHER 3
+#define FORWARD 0
+#define BACK 1
 unsigned long ini_angle;
 unsigned long tar_angle;
 double pressure_forward;
@@ -382,8 +376,8 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     fprintf( stderr, "Set Periodic Error!", 1 );
   printf("set loop period\n");
   // fix joint 1 (pre)
-  setState( OTHER, 2.0* PRESSURE_STOP );
-  valve_now[OTHER] = 2.0* PRESSURE_STOP;
+  setState( OTHER, PRESSURE_STOP );
+  valve_now[OTHER] = PRESSURE_STOP;
   // set init
   ini_t = rt_timer_read();
   // task

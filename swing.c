@@ -42,24 +42,7 @@
 #define STR_NUM 4096
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
-#define COMMANDS_FILE "data/commands.dat"
-
-// control
-#define JOINT_NUM 2
-#define LIMIT_NUM 2
-#define CHAMBER_NUM 2
-#define ANGLE_BOARD 1
-#define ANGLE_PORT 0
-double p_gain, i_gain, d_gain;
-
-// loop
-unsigned int step = 0; // counter
-unsigned int is_stop = 0;
-unsigned int is_end = 0;
-#define PRESSURE_MAX 0.06
-#define PRESSURE_FIX 0.06
-//#define PRESSURE_CHANGE 0.05
-RTIME ini_t, now_t;
+#define COMMAND_FILE "data/commands.dat"
 
 // xenomai
 #define PRIORITY 99
@@ -68,21 +51,23 @@ RTIME ini_t, now_t;
 #define ONE_IN_NANO 1000000000
 
 // motion
+#define BACK0 0
+#define BACK1 2
+#define PRESSURE_INIT 0.05
+#define ANGLE_BOARD 1
 #define STOP_VELOCITY 2
 #define WAIT_TIME 1
-#define NEAR_ANGLE 30
 #define PRESSURE_STOP 0.5
-#define OTHER 3
-#define FORWARD 0
-#define BACK 1
-unsigned long ini_angle;
-unsigned long tar_angle;
-double pressure_forward;
-double pressure_back;
+#define ANGLE_END0 1000
+#define ANGLE_END1 1000
+unsigned int step = 0; // counter
+unsigned int is_stop = 0;
+unsigned int is_end = 0;
+RTIME ini_t, now_t; // time
+double pressure[NUM_OF_CHANNELS];
 
 // data
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
-unsigned long target_data[LINE_NUM][JOINT_NUM];
 double valve_data[LINE_NUM][NUM_OF_CHANNELS];
 double time_data[LINE_NUM];
 double valve_now[NUM_OF_CHANNELS];
@@ -342,6 +327,7 @@ int is_reach(unsigned int n){
 }
 
 void xen_thread(void *arg __attribute__((__unused__))) {
+  int c;
   printf( "starting real time thread\n" ); 
   // wait for stabilization
   rt_task_sleep( ONE_IN_NANO );
@@ -363,19 +349,22 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     // measure
     getSensors();
     // phase switch
-    if ( is_stop < 0 ){
+    if ( is_stop < 1 ){
       // swing phase
       // get angle
-      if( find_reach() > 0 ){
+      if( is_reach(step) > 0 ){
 	// phase end
-	is_acce = 0;
-	// stop arm
-	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-	  setState( c, pressure_stop[c] );
-	  valve_now[c] = pressure_stop[c];
-	}
 	is_stop = 1;
 	printf("arm reached. stop.\n");	  
+	// stop arm
+	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
+	  setState( c, 0 );
+	  valve_now[c] = 0;
+	}
+	setState( BACK0, PRESSURE_STOP );
+	setState( BACK1, PRESSURE_STOP );
+	valve_now[BACK0] = PRESSURE_STOP;
+	valve_now[BACK1] = PRESSURE_STOP;
       }
     }else{
       // stop phase
@@ -472,6 +461,20 @@ int loadCommands(void){
   return 1;
 }
 
+void init_posture(void){
+  // time
+  RTIME ini_t_wait = rt_timer_read();
+  RTIME now_t_wait = rt_timer_read();
+  // set valves
+  setState( BACK0, PRESSURE_INIT );
+  setState( BACK1, PRESSURE_INIT );
+  // wait 
+  while( NANO_TO_SEC *( now_t_wait - ini_t_wait ) < WAIT_TIME )
+    now_t_wait = rt_timer_read();
+  // exhaust
+  exhaustAll();
+}
+
 int main( int argc, char *argv[] ){
   RT_TASK thread_desc; 
   // load commands
@@ -499,13 +502,13 @@ int main( int argc, char *argv[] ){
   // move arm
   while( is_end < 1 && step < LINE_NUM )
     getTime();
+  // unitialize
+  exhaustAll();
   // delete tasks
   if( rt_task_delete( &thread_desc )){
     fprintf( stderr, "Task Delete Error!\n", 1 );
     return 0;
   }
-  // unitialize
-  exhaustAll();
   // save data
   saveResults(step);
   
