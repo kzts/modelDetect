@@ -324,10 +324,11 @@ unsigned long getAngle( unsigned int n, unsigned int p ){
   return sensor_data[n][ANGLE_BOARD][p];
 }
 
-unsigned long getPressure( unsigned int n, unsigned int p ){
-  double ratio = sensor_data[n][PRESSURE_BOARD][p]/ VAL_MAX;
+double getPressure( unsigned int n, unsigned int p ){
+  double ratio = ( sensor_data[n][PRESSURE_BOARD][p] + 0.0 )/ VAL_MAX;
   double volt  = VOLT_MAX* ratio;
   double pres  = ( volt - VOLT_MIN )/( VOLT_MAX - VOLT_MIN ); // ratio
+  //printf( "ratio: %f, volt: %f, pressure: %f\n", ratio, volt, pres );
   return pres;
 }
 
@@ -357,8 +358,10 @@ int main( int argc, char *argv[] ){
   // loop
   for( n = 0; n < LINE_NUM; n++ ){
     getSensors(n);
+    //getPressure( n, CHECK );
     //printf("angle: %4d, %4d\n",sensor_data[n][1][0],sensor_data[n][1][1]);
     printf( "pressure: %8.3f\n", getPressure( n, CHECK ));
+    //printf("pressure: %4d\n",sensor_data[n][PRESSURE_BOARD][CHECK]);
     if( getTime() > end_time )
       break;
   }
