@@ -360,7 +360,8 @@ int main( int argc, char *argv[] ){
     getSensors(n);
     //getPressure( n, CHECK );
     //printf("angle: %4d, %4d\n",sensor_data[n][1][0],sensor_data[n][1][1]);
-    printf( "pressure: %8.3f\n", getPressure( n, CHECK ));
+    //printf( "pressure: %8.3f\n", getPressure( n, CHECK ));
+    printf( "pressure: %8.3f\n", getPressure( n, 0 ));
     //printf("pressure: %4d\n",sensor_data[n][PRESSURE_BOARD][CHECK]);
     if( getTime() > end_time )
       break;

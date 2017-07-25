@@ -38,7 +38,8 @@
 #define EXHAUST 0.0
 
 // files
-#define LINE_NUM 5000
+//#define LINE_NUM 5000
+#define LINE_NUM 1500
 #define STR_NUM 4096
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
@@ -51,16 +52,20 @@
 #define ONE_IN_NANO 1000000000
 
 // motion
-#define BACK0 0
-#define BACK1 2
-#define PRESSURE_INIT 0.05
+#define BACK0 1
+#define BACK1 3
+#define PRESSURE_INIT 0.08
 #define ANGLE_BOARD 1
 #define STOP_VELOCITY 2
-#define WAIT_TIME 1
+#define WAIT_INIT 1
+#define WAIT_EXHAUST 0.3
 #define PRESSURE_STOP 0.5
-#define ANGLE_END0 1000
-#define ANGLE_END1 1000
+#define ANGLE_END0 1400
+#define ANGLE_END1 700
 unsigned int step = 0; // counter
+unsigned int is_init = 0;
+unsigned int is_wait = 0;
+unsigned int is_acce = 0;
 unsigned int is_stop = 0;
 unsigned int is_end = 0;
 RTIME ini_t, now_t; // time
@@ -326,62 +331,6 @@ int is_reach(unsigned int n){
     return 0;
 }
 
-void xen_thread(void *arg __attribute__((__unused__))) {
-  int c;
-  printf( "starting real time thread\n" ); 
-  // wait for stabilization
-  rt_task_sleep( ONE_IN_NANO );
-  // set periodic time
-  if( rt_task_set_periodic( NULL, TM_NOW, PERIOD ))
-    fprintf( stderr, "Set Periodic Error!", 1 );
-  printf("set loop period\n");
-  // set init
-  for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-    setState( c, pressure[c] );
-    valve_now[c] = pressure[c];
-  }
-  ini_t = rt_timer_read();
-  // task
-  while(1) {
-    // detect delay
-    if(rt_task_wait_period(NULL))
-      fprintf( stderr, "Loop Error!\n", 1 ); 
-    // measure
-    getSensors();
-    // phase switch
-    if ( is_stop < 1 ){
-      // swing phase
-      // get angle
-      if( is_reach(step) > 0 ){
-	// phase end
-	is_stop = 1;
-	printf("arm reached. stop.\n");	  
-	// stop arm
-	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-	  setState( c, 0 );
-	  valve_now[c] = 0;
-	}
-	setState( BACK0, PRESSURE_STOP );
-	setState( BACK1, PRESSURE_STOP );
-	valve_now[BACK0] = PRESSURE_STOP;
-	valve_now[BACK1] = PRESSURE_STOP;
-      }
-    }else{
-      // stop phase
-      if( abs( getMaxVelocity(step) ) < STOP_VELOCITY ){
-	// motion end
-	is_stop = 0;
-	is_end  = 1;
-	printf("motion end.\n");	  
-      }
-    }
-    // get command value
-    getValves();
-    // next
-    step++;
-  }// while
-}//function
-
 void saveResults(unsigned int end_step) {
   FILE *fp;
   char results_file[STR_NUM];
@@ -439,16 +388,18 @@ int loadCommands(void){
   char *tmp;
   int c;
   // open file
-  fp = fopen( COMMAND_FILE, "w");
+  fp = fopen( COMMAND_FILE, "r" );
   if (fp == NULL){
     printf( "File open error: %s\n", COMMAND_FILE );
     return 0;
   }
+  //else{ printf( "File open: %s\n", COMMAND_FILE ); }
   // read
   fgets( str, STR_NUM, fp );
+  //printf("str=%s",str);
   tmp = strtok( str,  DELIMITER ); 
   for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-    tmp = strtok( NULL, " " ); 
+    tmp = strtok( NULL, DELIMITER ); 
     pressure[c] = atof( tmp );
   }
   // close
@@ -461,25 +412,114 @@ int loadCommands(void){
   return 1;
 }
 
-void init_posture(void){
-  // time
-  RTIME ini_t_wait = rt_timer_read();
-  RTIME now_t_wait = rt_timer_read();
-  // set valves
-  setState( BACK0, PRESSURE_INIT );
-  setState( BACK1, PRESSURE_INIT );
-  // wait 
-  while( NANO_TO_SEC *( now_t_wait - ini_t_wait ) < WAIT_TIME )
-    now_t_wait = rt_timer_read();
-  // exhaust
-  exhaustAll();
-}
+void xen_thread(void *arg __attribute__((__unused__))) {
+  int c;
+  RTIME ini_t_wait, now_t_wait; // time
+  printf( "starting real time thread\n" ); 
+  // wait for stabilization
+  rt_task_sleep( ONE_IN_NANO );
+  // set periodic time
+  if( rt_task_set_periodic( NULL, TM_NOW, PERIOD ))
+    fprintf( stderr, "Set Periodic Error!", 1 );
+  printf("set loop period\n");
+  // take initial posture
+  is_init = 1;
+  setState(  BACK0, PRESSURE_INIT );
+  setState(  BACK1, PRESSURE_INIT );
+  valve_now[ BACK0 ] = PRESSURE_INIT;
+  valve_now[ BACK1 ] = PRESSURE_INIT;
+  ini_t = rt_timer_read();
+  ini_t_wait = rt_timer_read();
+  // task
+  while(1) {
+    // detect delay
+    if(rt_task_wait_period(NULL))
+      fprintf( stderr, "Loop Error!\n", 1 ); 
+    // measure
+    getSensors();
+    // phase: init phase
+    if ( is_init > 0 ){
+      // get time 
+      now_t_wait = rt_timer_read();
+      if( NANO_TO_SEC *( now_t_wait - ini_t_wait ) > WAIT_INIT ){
+	// phase end
+	is_init = 0;
+	// exhaust
+	is_wait = 1;
+	ini_t_wait = rt_timer_read();
+	for( c = 0; c < NUM_OF_CHANNELS; c++ ){ 
+	  setState( c, EXHAUST );
+	  valve_now[c] = EXHAUST;
+	}
+	printf("exhaust.\n");
+      }        
+    }
+    // phase: wait phase
+    if ( is_wait > 0 ){
+      // get time 
+      now_t_wait = rt_timer_read();
+      if( NANO_TO_SEC *( now_t_wait - ini_t_wait ) > WAIT_EXHAUST ){
+	// phase end
+	is_wait = 0;
+	// accelerate arm
+	is_acce = 1;
+	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
+	  setState( c, pressure[c] );
+	  valve_now[c] = pressure[c];
+	}
+	printf("accelerate.\n");
+      }        
+    }
+    // phase switch
+    if ( is_acce > 0 ){
+      // swing phase
+      // get angle
+      if( is_reach(step) > 0 ){
+	// phase end
+	is_acce = 0;
+	printf("arm reached. stop.\n");	  
+	// stop arm
+	is_stop = 1;
+	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
+	  setState( c, 0 );
+	  valve_now[c] = 0;
+	}
+	setState( BACK0, PRESSURE_STOP );
+	setState( BACK1, PRESSURE_STOP );
+	valve_now[BACK0] = PRESSURE_STOP;
+	valve_now[BACK1] = PRESSURE_STOP;
+      }
+    }
+    if( is_stop > 0 ){
+      // stop phase
+      if( abs( getMaxVelocity(step) ) < STOP_VELOCITY ){
+	// motion end
+	is_stop = 0;
+	is_end  = 1;
+	printf("motion end.\n");	  
+      }
+    }
+    // get command value
+    getValves();
+    // next
+    step++;
+  }// while
+}//function
 
 int main( int argc, char *argv[] ){
   RT_TASK thread_desc; 
-  // load commands
-  if( loadCommands() < 1 )
+  // input
+  if ( argc != 5 ){
+    printf("input: four pressures.\n");
     return 0;
+  }
+  pressure[0] = atof( argv[1] );
+  pressure[1] = atof( argv[2] );
+  pressure[2] = atof( argv[3] );
+  pressure[3] = atof( argv[4] );
+  // load commands
+  // if( loadCommands() < 1 )
+  //return 0;
   // initialize
   ini_t = rt_timer_read();
   init();
@@ -487,8 +527,6 @@ int main( int argc, char *argv[] ){
   init_DAConvAD5328();
   init_sensor();  
   exhaustAll();
-  // take initial posture
-  init_posture();
   // create tasks
   if( rt_task_create( &thread_desc, "BBB_RT", 0, PRIORITY, 0 )){
     fprintf( stderr, "Task Create Error!\n", 1 );
