@@ -52,24 +52,25 @@
 #define ONE_IN_NANO 1000000000
 
 // motion
+#define FORWARD0 0
 #define BACK0 1
+#define FORWARD1 2
 #define BACK1 3
 #define PRESSURE_INIT 0.08
 #define ANGLE_BOARD 1
-#define STOP_VELOCITY 2
-#define WAIT_INIT 1
-#define WAIT_EXHAUST 0.3
-#define PRESSURE_STOP 0.5
-#define ANGLE_END0 1400
-#define ANGLE_END1 700
+//#define STOP_VELOCITY 2
+#define STOP_VELOCITY 10
+#define INIT_TIME 2
+#define FIX_TIME 1
+#define STOP_PRESSURE 0.5
+#define ANGLE_STOP0 1400
+#define ANGLE_STOP1 800
+#define PHASE_NUM 3
+#define CHAMBER_NUM 4
 unsigned int step = 0; // counter
-unsigned int is_init = 0;
-unsigned int is_wait = 0;
-unsigned int is_acce = 0;
-unsigned int is_stop = 0;
 unsigned int is_end = 0;
 RTIME ini_t, now_t; // time
-double pressure[NUM_OF_CHANNELS];
+double pressure[PHASE_NUM][CHAMBER_NUM];
 
 // data
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
@@ -143,6 +144,7 @@ void setDARegister(unsigned char ch, unsigned short dac_data){
 void setState(unsigned int ch, double pressure_coeff)
 {
   setDARegister(ch, (unsigned short)(pressure_coeff * resolution));
+  valve_now[ch] = pressure_coeff;
 }
 
 // **** SPI for sensors ****
@@ -322,15 +324,6 @@ int getMaxVelocity(unsigned int n){
     return vel1;
 }
 
-int is_reach(unsigned int n){
-  if( getAngle(n,0) < ANGLE_END0 )
-    return 1;
-  if( getAngle(n,1) < ANGLE_END1 )
-    return 1;
-  else
-    return 0;
-}
-
 void saveResults(unsigned int end_step) {
   FILE *fp;
   char results_file[STR_NUM];
@@ -382,39 +375,17 @@ void saveResults(unsigned int end_step) {
   printf("saved %s. %d lines\n", results_file, end_step );
 }
 
-int loadCommands(void){
-  FILE *fp;
-  char str[STR_NUM];
-  char *tmp;
-  int c;
-  // open file
-  fp = fopen( COMMAND_FILE, "r" );
-  if (fp == NULL){
-    printf( "File open error: %s\n", COMMAND_FILE );
-    return 0;
-  }
-  //else{ printf( "File open: %s\n", COMMAND_FILE ); }
-  // read
-  fgets( str, STR_NUM, fp );
-  //printf("str=%s",str);
-  tmp = strtok( str,  DELIMITER ); 
-  for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-    tmp = strtok( NULL, DELIMITER ); 
-    pressure[c] = atof( tmp );
-  }
-  // close
-  fclose(fp);
-  // print
-  printf("pressure: ");
-  for ( c = 0; c< NUM_OF_CHANNELS; c++ )
-    printf( "%5.4f%s", pressure[c], DELIMITER );
-  printf("\n");
-  return 1;
+void setCommands(unsigned int c){
+  unsigned int n;
+  for( n = 0; n < CHAMBER_NUM; n++ )
+    setState( n, pressure[n][c] );
 }
 
 void xen_thread(void *arg __attribute__((__unused__))) {
-  int c;
-  RTIME ini_t_wait, now_t_wait; // time
+  unsigned int n, phase = 0;  
+  long vel0 = 0, vel1 = 0;
+  unsigned is_acce0 = 0,is_acce1 = 0, is_decc0 = 0, is_decc1 = 0, is_end0 = 0, is_end1 = 0;  
+  RTIME ini_t_wait; // time
   printf( "starting real time thread\n" ); 
   // wait for stabilization
   rt_task_sleep( ONE_IN_NANO );
@@ -422,14 +393,12 @@ void xen_thread(void *arg __attribute__((__unused__))) {
   if( rt_task_set_periodic( NULL, TM_NOW, PERIOD ))
     fprintf( stderr, "Set Periodic Error!", 1 );
   printf("set loop period\n");
-  // take initial posture
-  is_init = 1;
-  setState(  BACK0, PRESSURE_INIT );
-  setState(  BACK1, PRESSURE_INIT );
-  valve_now[ BACK0 ] = PRESSURE_INIT;
-  valve_now[ BACK1 ] = PRESSURE_INIT;
+  // time start
   ini_t = rt_timer_read();
+  // take initial posture
+  setCommands(phase);
   ini_t_wait = rt_timer_read();
+  printf("0: take initial posture.\n");
   // task
   while(1) {
     // detect delay
@@ -437,89 +406,94 @@ void xen_thread(void *arg __attribute__((__unused__))) {
       fprintf( stderr, "Loop Error!\n", 1 ); 
     // measure
     getSensors();
-    // phase: init phase
-    if ( is_init > 0 ){
-      // get time 
-      now_t_wait = rt_timer_read();
-      if( NANO_TO_SEC *( now_t_wait - ini_t_wait ) > WAIT_INIT ){
-	// phase end
-	is_init = 0;
-	// exhaust
-	is_wait = 1;
+    // phase0: take initial posture
+    if ( phase == 0 ){
+      if( NANO_TO_SEC *( rt_timer_read() - ini_t_wait ) > INIT_TIME ){
+	phase++;
+	setCommands(phase); // phase=1
 	ini_t_wait = rt_timer_read();
-	for( c = 0; c < NUM_OF_CHANNELS; c++ ){ 
-	  setState( c, EXHAUST );
-	  valve_now[c] = EXHAUST;
-	}
-	printf("exhaust.\n");
+	printf("1: fix joint.\n");
       }        
     }
-    // phase: wait phase
-    if ( is_wait > 0 ){
-      // get time 
-      now_t_wait = rt_timer_read();
-      if( NANO_TO_SEC *( now_t_wait - ini_t_wait ) > WAIT_EXHAUST ){
-	// phase end
-	is_wait = 0;
-	// accelerate arm
-	is_acce = 1;
-	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-	  setState( c, pressure[c] );
-	  valve_now[c] = pressure[c];
-	}
-	printf("accelerate.\n");
+    // phase1: fix joint
+    if ( phase == 1 ){
+      if( NANO_TO_SEC *( rt_timer_read() - ini_t_wait ) > FIX_TIME ){
+	phase++;
+	setCommands(phase); // phase=2
+	is_acce0 = 1;
+	is_acce1 = 1;
+	printf("2: acceleration.\n");
       }        
     }
-    // phase switch
-    if ( is_acce > 0 ){
-      // swing phase
-      // get angle
-      if( is_reach(step) > 0 ){
-	// phase end
-	is_acce = 0;
-	printf("arm reached. stop.\n");	  
-	// stop arm
-	is_stop = 1;
-	for ( c=0; c< NUM_OF_CHANNELS; c++ ){
-	  setState( c, 0 );
-	  valve_now[c] = 0;
-	}
-	setState( BACK0, PRESSURE_STOP );
-	setState( BACK1, PRESSURE_STOP );
-	valve_now[BACK0] = PRESSURE_STOP;
-	valve_now[BACK1] = PRESSURE_STOP;
+    // phase2: acceleration
+    if ( phase == 2 ){
+      // deceleration joint 0
+      if( is_acce0 > 0 && getAngle(step,0) < ANGLE_STOP0 ){
+	is_acce0 = 0;
+	is_decc0 = 1;
+	vel0 = getVelocity(step,0);
+	setState( BACK0, STOP_PRESSURE );
       }
-    }
-    if( is_stop > 0 ){
-      // stop phase
-      if( abs( getMaxVelocity(step) ) < STOP_VELOCITY ){
-	// motion end
-	is_stop = 0;
-	is_end  = 1;
-	printf("motion end.\n");	  
+      // deceleration joint 1
+      if( is_acce1 > 0 && getAngle(step,1) < ANGLE_STOP1 ){
+	is_acce1 = 0;
+	is_decc1 = 1;
+	vel1 = getVelocity(step,1);
+	setState( BACK1, STOP_PRESSURE );
       }
+      // end joint 0
+      if( is_decc0 > 0 && getVelocity(step,0) * vel0 < 0 ){
+	is_decc0 = 0;
+	is_end0  = 1;
+	setState( BACK0,    EXHAUST );
+	setState( FORWARD0, EXHAUST );
+      } 
+      // end joint 1
+      if( is_decc1 > 0 && getVelocity(step,1) * vel1 < 0 ){
+	is_decc1 = 0;
+	is_end1  = 1;
+	setState( BACK1,    EXHAUST );
+	setState( FORWARD1, EXHAUST );
+      }
+      // end of motion 
+      if( is_end0 > 0 && is_end1 > 0 ){
+	phase++;
+	is_end = step;
+	printf("end of motion.\n");
+      }        
     }
     // get command value
     getValves();
     // next
-    step++;
+    if( step < LINE_NUM )
+      step++;
+    else
+      is_end = step;
   }// while
 }//function
 
+void printPressure(void){
+  int p, c;
+  printf("pressure: \n");
+  for( p = 0 ; p < PHASE_NUM; p++ ){
+    for( c = 0 ; c < CHAMBER_NUM; c++ )
+      printf("%5,4f ", pressure[p][c] );
+    printf("\n");
+  }
+}
+
 int main( int argc, char *argv[] ){
+  int p, c;
   RT_TASK thread_desc; 
   // input
-  if ( argc != 5 ){
+  if ( argc != PHASE_NUM * CHAMBER_NUM + 1 ){
     printf("input: four pressures.\n");
     return 0;
   }
-  pressure[0] = atof( argv[1] );
-  pressure[1] = atof( argv[2] );
-  pressure[2] = atof( argv[3] );
-  pressure[3] = atof( argv[4] );
-  // load commands
-  // if( loadCommands() < 1 )
-  //return 0;
+  for( p = 0 ; p < PHASE_NUM; p++ )
+    for( c = 0 ; c < CHAMBER_NUM; c++ )
+      pressure[p][c] = atof( argv[ PHASE_NUM*p + c + 1 ] );
+  printPressure();
   // initialize
   ini_t = rt_timer_read();
   init();
@@ -538,7 +512,7 @@ int main( int argc, char *argv[] ){
     return 0;
   }
   // move arm
-  while( is_end < 1 && step < LINE_NUM )
+  while( is_end < 1 )
     getTime();
   // unitialize
   exhaustAll();
@@ -548,7 +522,7 @@ int main( int argc, char *argv[] ){
     return 0;
   }
   // save data
-  saveResults(step);
+  saveResults(is_end);
   
   return 0;
 }
