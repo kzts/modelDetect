@@ -38,7 +38,7 @@
 #define EXHAUST 0.0
 
 // files
-#define LINE_NUM 5000
+#define LINE_NUM 1000
 #define STR_NUM 4096
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
@@ -52,11 +52,9 @@
 double p_gain, i_gain, d_gain;
 
 // loop
-unsigned int is_end = 0;
-#define PRESSURE_MAX 0.06
-#define PRESSURE_FIX 0.06
-//#define PRESSURE_CHANGE 0.05
 RTIME ini_t, now_t;
+unsigned int is_end = 0;
+#define PRESSURE_MAX 0.10
 
 // xenomai
 #define PRIORITY 99
@@ -66,7 +64,7 @@ RTIME ini_t, now_t;
 
 // motion
 #define STOP_VELOCITY 5
-#define NEAR_ANGLE 3
+#define NEAR_ANGLE 30
 #define FORWARD0 0
 #define FORWARD1 2
 #define BACK0 1
@@ -384,6 +382,10 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	// control
 	PIDcontrol( step, 0, FORWARD0, BACK0 );
 	PIDcontrol( step, 1, FORWARD1, BACK1 );
+	// print 
+	printf("%05d: %04d/%04d, %04d/%04d, %4.3f,%4.3f,%4.3f,%4.3f\n", 
+	       step, getAngle(step,0), tar_angle[0], getAngle(step,1), tar_angle[1], 
+	       valve_now[0], valve_now[1], valve_now[2], valve_now[3]);
       }
     }
     // get command value
@@ -451,7 +453,7 @@ int main( int argc, char *argv[] ){
   RT_TASK thread_desc; 
   // input
   if ( argc != 6 ){
-    printf("input: three gains and two angles.\n");
+    printf("input: gain and two angles.\n");
     return 0;
   }
   p_gain = atof( argv[1] );
@@ -459,7 +461,7 @@ int main( int argc, char *argv[] ){
   d_gain = atof( argv[3] );
   tar_angle[0] = atoi( argv[4] );
   tar_angle[1] = atoi( argv[5] );
-  printf("gain: %f, %f, %f\n", p_gain, i_gain, d_gain );
+  //printf("gain: %f, %f, %f\n", p_gain, i_gain, d_gain );
   // initialize
   ini_t = rt_timer_read();
   init();
