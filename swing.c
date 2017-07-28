@@ -9,7 +9,7 @@
 #include <sys/time.h> // gettimeofday   
 #include <string.h> // fsprintf
 #include <time.h> // localtime
-// xenomai
+// xenomai.
 #include <native/task.h>
 #include <native/timer.h>
 
