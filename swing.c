@@ -37,9 +37,14 @@
 
 #define EXHAUST 0.0
 
+// pressure
+#define VAL_MAX 4096.0
+#define VOLT_MAX 5.0
+#define VOLT_MIN 1.0
+
 // files
 //#define LINE_NUM 5000
-#define LINE_NUM 1500
+#define LINE_NUM 2500
 #define STR_NUM 4096
 #define DELIMITER ","
 #define FILENAME_FORMAT "data/%04d%02d%02d/%02d%02d%02d.dat"
@@ -52,19 +57,20 @@
 #define ONE_IN_NANO 1000000000
 
 // motion
-#define FORWARD0 0
-#define BACK0    1
+#define BACK0    0
+#define FORWARD0 1
 #define FORWARD1 2
 #define BACK1    3
-#define INIT_PRESSURE 0.08
-#define STOP_PRESSURE 0.5
+#define INIT_PRESSURE 0.06
+#define STOP_PRESSURE 0.4
+#define PRESSURE_BOARD 0
 #define ANGLE_BOARD 1
 //#define STOP_VELOCITY 2
 #define STOP_VELOCITY 10
 #define INIT_TIME 2
 #define FIX_TIME 1
-#define ANGLE_STOP0 1400
-#define ANGLE_STOP1 800
+#define ANGLE_STOP0 2228
+#define ANGLE_STOP1 1157
 #define CHAMBER_NUM 4
 int mode;
 unsigned int step = 0; // counter
@@ -375,6 +381,22 @@ void saveResults(unsigned int end_step) {
   printf("saved %s. %d lines\n", results_file, end_step );
 }
 
+double getPressure( unsigned int n, unsigned int p ){
+  double ratio = ( sensor_data[n][PRESSURE_BOARD][p] + 0.0 )/ VAL_MAX;
+  double volt  = VOLT_MAX* ratio;
+  double pres  = ( volt - VOLT_MIN )/( VOLT_MAX - VOLT_MIN ); // ratio
+  //printf( "ratio: %f, volt: %f, pressure: %f\n", ratio, volt, pres );
+  return pres;
+}
+
+void printState( unsigned int n ){  
+  printf( "step: %05d, ", n );
+  printf( "angle: %4d, %4d, ", sensor_data[n][ANGLE_BOARD][0], sensor_data[n][ANGLE_BOARD][1] );
+  printf( "pressure: %4.3f, %4.3f, %4.3f, %4.3f, %4.3f\n", 
+	  getPressure(n,0), getPressure(n,1), getPressure(n,2), getPressure(n,3), 
+	  getPressure(n,5) );
+}
+
 void xen_thread(void *arg __attribute__((__unused__))) {
   unsigned int n, phase = 0;  
   long vel0 = 0, vel1 = 0;
@@ -417,25 +439,29 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	phase++; // phase:1->2
 	setState( FORWARD0, pressure[FORWARD0] );
 	setState( FORWARD1, pressure[FORWARD1] );
-	if ( mode == 0 )
-	  is_end0 = 1;
-	else
+	if ( mode == 0 ){
+	  is_end1  = 1;
 	  is_acce0 = 1;
-	if ( mode == 1 )
-	  is_end1 = 1;
-	else
+	}else if ( mode == 1 ){
+	  is_end0  = 1;
 	  is_acce1 = 1;
+	}else{
+	  is_acce0 = 1;
+	  is_acce1 = 1;
+	}
 	printf("2: acceleration.\n");
       }        
     }
     // phase2: acceleration
     if ( phase == 2 ){
+      //printf("%d,%d, %d,%d, %d,%d \n", is_acce0, is_acce1, is_decc0, is_decc1, is_end0, is_end1 );
       // deceleration joint 0
-      if( is_acce0 > 0 && getAngle(step,0) < ANGLE_STOP0 ){
+      if( is_acce0 > 0 && getAngle(step,0) > ANGLE_STOP0 ){
 	is_acce0 = 0;
 	is_decc0 = 1;
 	vel0 = getVelocity(step,0);
 	setState( BACK0, STOP_PRESSURE );
+	printf("3: decceleration 0.\n");
       }
       // deceleration joint 1
       if( is_acce1 > 0 && getAngle(step,1) < ANGLE_STOP1 ){
@@ -443,6 +469,7 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 	is_decc1 = 1;
 	vel1 = getVelocity(step,1);
 	setState( BACK1, STOP_PRESSURE );
+	printf("3: decceleration 1.\n");
       }
       // end joint 0
       if( is_decc0 > 0 && getVelocity(step,0) * vel0 < 0 ){
@@ -467,6 +494,7 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     }
     // get command value
     getValves();
+    //printState(step);
     // next
     if( step < LINE_NUM )
       step++;
@@ -495,7 +523,7 @@ int main( int argc, char *argv[] ){
   for( c = 0 ; c < CHAMBER_NUM; c++ )
     pressure[c] = atof( argv[ c + 1 + 1] );
   printPressure();
-  /*
+  
   // initialize
   ini_t = rt_timer_read();
   init();
@@ -525,7 +553,7 @@ int main( int argc, char *argv[] ){
   }
   // save data
   saveResults(is_end);
-  */  
+    
   return 0;
 }
 
