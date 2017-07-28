@@ -53,24 +53,24 @@
 
 // motion
 #define FORWARD0 0
-#define BACK0 1
+#define BACK0    1
 #define FORWARD1 2
-#define BACK1 3
-#define PRESSURE_INIT 0.08
+#define BACK1    3
+#define INIT_PRESSURE 0.08
+#define STOP_PRESSURE 0.5
 #define ANGLE_BOARD 1
 //#define STOP_VELOCITY 2
 #define STOP_VELOCITY 10
 #define INIT_TIME 2
 #define FIX_TIME 1
-#define STOP_PRESSURE 0.5
 #define ANGLE_STOP0 1400
 #define ANGLE_STOP1 800
-#define PHASE_NUM 3
 #define CHAMBER_NUM 4
+int mode;
 unsigned int step = 0; // counter
 unsigned int is_end = 0;
 RTIME ini_t, now_t; // time
-double pressure[PHASE_NUM][CHAMBER_NUM];
+double pressure[CHAMBER_NUM];
 
 // data
 unsigned long sensor_data[LINE_NUM][NUM_ADC][NUM_ADC_PORT];
@@ -375,12 +375,6 @@ void saveResults(unsigned int end_step) {
   printf("saved %s. %d lines\n", results_file, end_step );
 }
 
-void setCommands(unsigned int c){
-  unsigned int n;
-  for( n = 0; n < CHAMBER_NUM; n++ )
-    setState( n, pressure[n][c] );
-}
-
 void xen_thread(void *arg __attribute__((__unused__))) {
   unsigned int n, phase = 0;  
   long vel0 = 0, vel1 = 0;
@@ -396,7 +390,8 @@ void xen_thread(void *arg __attribute__((__unused__))) {
   // time start
   ini_t = rt_timer_read();
   // take initial posture
-  setCommands(phase);
+  setState( BACK0, INIT_PRESSURE );
+  setState( BACK1, INIT_PRESSURE );
   ini_t_wait = rt_timer_read();
   printf("0: take initial posture.\n");
   // task
@@ -409,8 +404,9 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     // phase0: take initial posture
     if ( phase == 0 ){
       if( NANO_TO_SEC *( rt_timer_read() - ini_t_wait ) > INIT_TIME ){
-	phase++;
-	setCommands(phase); // phase=1
+	phase++; // phase:0->1
+	setState( BACK0, pressure[BACK0] );
+	setState( BACK1, pressure[BACK1] );
 	ini_t_wait = rt_timer_read();
 	printf("1: fix joint.\n");
       }        
@@ -418,10 +414,17 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     // phase1: fix joint
     if ( phase == 1 ){
       if( NANO_TO_SEC *( rt_timer_read() - ini_t_wait ) > FIX_TIME ){
-	phase++;
-	setCommands(phase); // phase=2
-	is_acce0 = 1;
-	is_acce1 = 1;
+	phase++; // phase:1->2
+	setState( FORWARD0, pressure[FORWARD0] );
+	setState( FORWARD1, pressure[FORWARD1] );
+	if ( mode == 0 )
+	  is_end0 = 1;
+	else
+	  is_acce0 = 1;
+	if ( mode == 1 )
+	  is_end1 = 1;
+	else
+	  is_acce1 = 1;
 	printf("2: acceleration.\n");
       }        
     }
@@ -473,27 +476,26 @@ void xen_thread(void *arg __attribute__((__unused__))) {
 }//function
 
 void printPressure(void){
-  int p, c;
-  printf("pressure: \n");
-  for( p = 0 ; p < PHASE_NUM; p++ ){
-    for( c = 0 ; c < CHAMBER_NUM; c++ )
-      printf("%5,4f ", pressure[p][c] );
-    printf("\n");
-  }
+  int c;
+  printf( "mode: %d, pressure: ", mode );
+  for( c = 0 ; c < CHAMBER_NUM; c++ )
+    printf( "%5.4f ", pressure[c] );
+  printf("\n");
 }
 
 int main( int argc, char *argv[] ){
   int p, c;
   RT_TASK thread_desc; 
   // input
-  if ( argc != PHASE_NUM * CHAMBER_NUM + 1 ){
-    printf("input: four pressures.\n");
+  if ( argc != CHAMBER_NUM + 1 + 1){
+    printf("input: mode and four pressures.\n");
     return 0;
   }
-  for( p = 0 ; p < PHASE_NUM; p++ )
-    for( c = 0 ; c < CHAMBER_NUM; c++ )
-      pressure[p][c] = atof( argv[ PHASE_NUM*p + c + 1 ] );
+  mode = atoi( argv[1] );
+  for( c = 0 ; c < CHAMBER_NUM; c++ )
+    pressure[c] = atof( argv[ c + 1 + 1] );
   printPressure();
+  /*
   // initialize
   ini_t = rt_timer_read();
   init();
@@ -523,7 +525,7 @@ int main( int argc, char *argv[] ){
   }
   // save data
   saveResults(is_end);
-  
+  */  
   return 0;
 }
 

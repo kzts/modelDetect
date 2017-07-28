@@ -31,6 +31,7 @@
 #define MICRO_TO_SEC 0.000001
 
 #define EXHAUST 0.0
+#define ANGLE_BOARD 1
 double pressure[NUM_OF_CHANNELS];
 
 // files
@@ -332,6 +333,14 @@ double getPressure( unsigned int n, unsigned int p ){
   return pres;
 }
 
+void printState( unsigned int n ){  
+  printf( "step: %05d, ", n );
+  printf( "angle: %4d, %4d, ", sensor_data[n][ANGLE_BOARD][0], sensor_data[n][ANGLE_BOARD][1] );
+  printf( "pressure: %4.3f, %4.3f, %4.3f, %4.3f, %4.3f\n", 
+	  getPressure(n,0), getPressure(n,1), getPressure(n,2), getPressure(n,3), 
+	  getPressure(n,5) );
+}
+
 int main( int argc, char *argv[] ){
   int n, c;
   double end_time;
@@ -358,10 +367,11 @@ int main( int argc, char *argv[] ){
   // loop
   for( n = 0; n < LINE_NUM; n++ ){
     getSensors(n);
+    printState(n);
     //getPressure( n, CHECK );
     //printf("angle: %4d, %4d\n",sensor_data[n][1][0],sensor_data[n][1][1]);
     //printf( "pressure: %8.3f\n", getPressure( n, CHECK ));
-    printf( "pressure: %8.3f\n", getPressure( n, 0 ));
+    //printf( "pressure: %8.3f\n", getPressure( n, 0 ));
     //printf("pressure: %4d\n",sensor_data[n][PRESSURE_BOARD][CHECK]);
     if( getTime() > end_time )
       break;
