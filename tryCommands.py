@@ -14,35 +14,34 @@ pmin = 0.1
 pfix = 0.2
 
 if mode == '0':
-    for diff0 in [ 0.11, 0.12, 0.13, 0.14, 0.15 ]:
-        for diff1 in [ 0.11, 0.12, 0.13, 0.14, 0.15 ]:
-            back0 = str( pmin )
-            forw0 = str( pmin + diff0 )            
-            back1 = str( pfix + diff1 )
-            forw1 = str( pfix )
-            command = swing + ' ' + mode + ' ' + back0 + ' ' + forw0 + ' ' + forw1 + ' '+ back1
-            print command
-            os.system(command)
-            time.sleep(1)
+    for diff in [ 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40 ]:
+        back0 = str( pmin )
+        forw0 = str( pmin + diff )            
+        back1 = str( pmin  )
+        forw1 = str( pmin + pfix )
+        command = swing + ' ' + mode + ' ' + back0 + ' ' + forw0 + ' ' + forw1 + ' '+ back1
+        print command
+        os.system(command)
+        time.sleep(1)
 elif mode == '1':
-    for diff0 in [ 0.11, 0.12, 0.13, 0.14, 0.15 ]:
-        for diff1 in [ 0.11, 0.12, 0.13, 0.14, 0.15 ]:
-            back0 = str( pfix + diff0 )
-            forw0 = str( pfix )
-            back1 = str( pmin )
-            forw1 = str( pmin + diff1 )            
-            command = swing + ' ' + mode + ' ' + back0 + ' ' + forw0 + ' ' + forw1 + ' '+ back1
-            print command
-            os.system(command)
-            time.sleep(1)
+    for diff in [ 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40 ]:
+        back0 = str( pmin )
+        forw0 = str( pmin + pfix )
+        back1 = str( pmin )
+        forw1 = str( pmin + diff )
+        command = swing + ' ' + mode + ' ' + back0 + ' ' + forw0 + ' ' + forw1 + ' '+ back1
+        print command
+        os.system(command)
+        time.sleep(1)        
 else:
-    for diff0 in [ 0.06, 0.07, 0.08, 0.09, 0.10 ]:
-        for diff1 in [ 0.06, 0.07, 0.08, 0.09, 0.10 ]:
+    for diff0 in [ 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16 ]:
+        for diff1 in [ 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16 ]:
             back0 = str( pmin )
             forw0 = str( pmin + diff0 )
             back1 = str( pmin )
-            forw1 = str( pmin + diff1 )            
+            forw1 = str( pmin + diff1 )
             command = swing + ' ' + mode + ' ' + back0 + ' ' + forw0 + ' ' + forw1 + ' '+ back1
             print command
             os.system(command)
-            time.sleep(1)
+            time.sleep(1)                    
+

@@ -61,16 +61,14 @@
 #define FORWARD0 1
 #define FORWARD1 2
 #define BACK1    3
-#define INIT_PRESSURE 0.06
-#define STOP_PRESSURE 0.4
+#define INIT_PRESSURE 0.07
+#define STOP_PRESSURE 0.6
 #define PRESSURE_BOARD 0
 #define ANGLE_BOARD 1
-//#define STOP_VELOCITY 2
-#define STOP_VELOCITY 10
 #define INIT_TIME 2
 #define FIX_TIME 1
-#define ANGLE_STOP0 2228
-#define ANGLE_STOP1 1157
+#define ANGLE_STOP0 2100
+#define ANGLE_STOP1 1427
 #define CHAMBER_NUM 4
 int mode;
 unsigned int step = 0; // counter
@@ -411,10 +409,18 @@ void xen_thread(void *arg __attribute__((__unused__))) {
   printf("set loop period\n");
   // time start
   ini_t = rt_timer_read();
-  // take initial posture
-  setState( BACK0, INIT_PRESSURE );
-  setState( BACK1, INIT_PRESSURE );
   ini_t_wait = rt_timer_read();
+  // take initial posture
+  if( mode == 0 ){
+    setState( BACK0, INIT_PRESSURE );
+    setState( FORWARD1, INIT_PRESSURE );
+  }else if( mode == 1 ){ 
+    setState( BACK1, INIT_PRESSURE );
+    setState( FORWARD0, INIT_PRESSURE );
+  }else{
+    setState( BACK0, INIT_PRESSURE );
+    setState( BACK1, INIT_PRESSURE );
+  }
   printf("0: take initial posture.\n");
   // task
   while(1) {
@@ -427,8 +433,14 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     if ( phase == 0 ){
       if( NANO_TO_SEC *( rt_timer_read() - ini_t_wait ) > INIT_TIME ){
 	phase++; // phase:0->1
-	setState( BACK0, pressure[BACK0] );
-	setState( BACK1, pressure[BACK1] );
+	if( mode == 0 ){
+	  setState( BACK0, pressure[BACK0] );	  
+	}else if( mode == 1 ){ 
+	  setState( BACK1, pressure[BACK1] );
+	}else{
+	  setState( BACK0, pressure[BACK0] );	  
+	  setState( BACK1, pressure[BACK1] );
+	}
 	ini_t_wait = rt_timer_read();
 	printf("1: fix joint.\n");
       }        
@@ -437,19 +449,25 @@ void xen_thread(void *arg __attribute__((__unused__))) {
     if ( phase == 1 ){
       if( NANO_TO_SEC *( rt_timer_read() - ini_t_wait ) > FIX_TIME ){
 	phase++; // phase:1->2
-	setState( FORWARD0, pressure[FORWARD0] );
-	setState( FORWARD1, pressure[FORWARD1] );
-	if ( mode == 0 ){
+	if( mode == 0 ){
+	  setState( BACK1, pressure[BACK1] );	  
+	  setState( FORWARD1, pressure[FORWARD1] );
+	  setState( FORWARD0, pressure[FORWARD0] );
 	  is_end1  = 1;
 	  is_acce0 = 1;
-	}else if ( mode == 1 ){
+	}else if( mode == 1 ){ 
+	  setState( BACK0, pressure[BACK0] );
+	  setState( FORWARD0, pressure[FORWARD0] );
+	  setState( FORWARD1, pressure[FORWARD1] );
 	  is_end0  = 1;
 	  is_acce1 = 1;
 	}else{
+	  setState( FORWARD0, pressure[FORWARD0] );
+	  setState( FORWARD1, pressure[FORWARD1] );
 	  is_acce0 = 1;
-	  is_acce1 = 1;
+	  is_acce1 = 1;	
 	}
-	printf("2: acceleration.\n");
+ 	printf("2: acceleration.\n");
       }        
     }
     // phase2: acceleration
@@ -511,32 +529,32 @@ void printPressure(void){
   printf("\n");
 }
 
-int main( int argc, char *argv[] ){
-  int p, c;
-  RT_TASK thread_desc; 
-  // input
-  if ( argc != CHAMBER_NUM + 1 + 1){
-    printf("input: mode and four pressures.\n");
-    return 0;
-  }
-  mode = atoi( argv[1] );
-  for( c = 0 ; c < CHAMBER_NUM; c++ )
-    pressure[c] = atof( argv[ c + 1 + 1] );
-  printPressure();
+int main( int argc, char *argv[] ){ 
+  int p, c; 
+  RT_TASK thread_desc;  
+  // input */
+  if ( argc != CHAMBER_NUM + 1 + 1){ 
+    printf("input: mode and four pressures.\n"); 
+    return 0; 
+  } 
+  mode = atoi( argv[1] ); 
+  for( c = 0 ; c < CHAMBER_NUM; c++ ) 
+    pressure[c] = atof( argv[ c + 1 + 1] ); 
+  printPressure(); 
   
-  // initialize
-  ini_t = rt_timer_read();
-  init();
-  init_pins(); // ALL 5 pins are HIGH except for GND
-  init_DAConvAD5328();
-  init_sensor();  
-  exhaustAll();
-  // create tasks
-  if( rt_task_create( &thread_desc, "BBB_RT", 0, PRIORITY, 0 )){
-    fprintf( stderr, "Task Create Error!\n", 1 );
-    return 0;
-  }
-  // start tasks
+  // initialize 
+  ini_t = rt_timer_read(); 
+  init(); 
+  init_pins(); // ALL 5 pins are HIGH except for GND 
+  init_DAConvAD5328(); 
+  init_sensor();   
+  exhaustAll(); 
+  // create tasks 
+  if( rt_task_create( &thread_desc, "BBB_RT", 0, PRIORITY, 0 )){ 
+    fprintf( stderr, "Task Create Error!\n", 1 ); 
+    return 0; 
+  } 
+  // start tasks 
   if(rt_task_start( &thread_desc, &xen_thread, NULL )){
     fprintf( stderr, "Task Start Error!\n",1 );
     return 0;
