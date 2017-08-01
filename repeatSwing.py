@@ -8,11 +8,12 @@ mode  = '2';
 swing = './swing'
 pmin  = 0.05
 ptick = 0.02
+poffs = 0.05
 
-for d0 in range( 1, 11 ):
-    for d1 in range( 1, 11 ):
-        diff0 = ptick* d0;
-        diff1 = ptick* d1;
+for d0 in range( 1, 9 ):
+    for d1 in range( 1, 9 ):
+        diff0 = ptick* d0 + poffs;
+        diff1 = ptick* d1 + poffs;
         back0 = str( pmin )
         forw0 = str( pmin + diff0 )
         back1 = str( pmin )
